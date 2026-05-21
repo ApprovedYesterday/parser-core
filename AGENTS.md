@@ -1,6 +1,6 @@
 # AGENTS.md — parser-core (Ozon Price Tracker)
 
-Spring Boot 3.3.0 / Java 21 Maven project.
+Spring Boot 4.0.6 / Java 21 Maven project.
 **Architecture:** Hexagonal (Ports and Adapters) / Domain-Driven Design (DDD).
 
 ## 🤖 AI Agent Directives (Rules)

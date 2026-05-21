@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: Scrapper
+
+ozon:
+  scraping:
+    base-url: "https://www.ozon.ru"
+    browser:
+      headless: true
+    stealth:
+      mask-webdriver: true
+      mask-webgl: true
+    user-agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
