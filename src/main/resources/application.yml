@@ -1,6 +1,21 @@
 spring:
   application:
     name: Scrapper
+  datasource:
+    url: jdbc:postgresql://localhost:5432/tracker
+    username: tracker
+    password: tracker
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  data:
+    redis:
+      host: localhost
+      port: 6379
 
 ozon:
   scraping:
@@ -11,3 +26,11 @@ ozon:
       mask-webdriver: true
       mask-webgl: true
     user-agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    seller-pool-size: 5
+    proxies:
+      - host: proxy1.example.com
+        port: 8080
+        type: http
+  rate-limiter:
+    capacity: 10
+    refill-rate: 1

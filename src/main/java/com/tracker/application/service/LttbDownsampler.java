@@ -4,6 +4,9 @@ import com.tracker.domain.PricePoint;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.springframework.stereotype.Component;
+
+@Component
 public class LttbDownsampler {
 
     public List<PricePoint> downsample(List<PricePoint> data, int targetSize) {

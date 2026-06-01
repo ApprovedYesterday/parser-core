@@ -19,9 +19,11 @@ import com.tracker.infrastructure.util.RetryableException;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 
-public class OzonPlaywrightAdapter implements ScraperPort {
+public class OzonPlaywrightAdapter implements ScraperPort, AutoCloseable {
 
     private static final String STEALTH_SCRIPT =
         """
@@ -54,11 +56,14 @@ public class OzonPlaywrightAdapter implements ScraperPort {
         """;
 
     private final Playwright playwright;
+    private final Browser browser;
     private final ProxyPort proxyPort;
     private final ConfigPort configPort;
     private final BackoffRetry backoffRetry;
     private final ObjectMapper objectMapper;
     private final PlaywrightConfig config;
+    private final ConsistentHashRing<Integer> hashRing;
+    private final Map<Integer, BrowserContext> contextPool = new ConcurrentHashMap<>();
 
     public OzonPlaywrightAdapter(
         Playwright playwright,
@@ -74,6 +79,21 @@ public class OzonPlaywrightAdapter implements ScraperPort {
         this.backoffRetry = backoffRetry;
         this.objectMapper = objectMapper;
         this.config = config;
+
+        var launchOptions = new BrowserType.LaunchOptions()
+            .setHeadless(config.browser().headless());
+        if (config.browser().executablePath() != null) {
+            launchOptions.setExecutablePath(
+                java.nio.file.Paths.get(config.browser().executablePath())
+            );
+        }
+        this.browser = playwright.chromium().launch(launchOptions);
+
+        int poolSize = Math.max(config.sellerPoolSize(), 1);
+        this.hashRing = new ConsistentHashRing<>(100);
+        for (int i = 0; i < poolSize; i++) {
+            hashRing.addNode(i);
+        }
     }
 
     @Override
@@ -85,40 +105,25 @@ public class OzonPlaywrightAdapter implements ScraperPort {
         }
     }
 
+    @Override
+    public void close() {
+        for (BrowserContext ctx : contextPool.values()) {
+            ctx.close();
+        }
+        if (browser != null) browser.close();
+    }
+
     private PricePoint doFetch(Sku sku) {
         Callable<PricePoint> task = () -> fetchWithBrowser(sku);
         return backoffRetry.executeWithRetry(task, 3, Duration.ofSeconds(2));
     }
 
     private PricePoint fetchWithBrowser(Sku sku) {
-        Browser browser = null;
-        BrowserContext context = null;
-        Page page = null;
+        String sellerId = extractSellerId(sku);
+        int slot = hashRing.getNode(sellerId);
+        BrowserContext context = getOrCreateContext(slot);
+        Page page = context.newPage();
         try {
-            var launchOptions = new BrowserType.LaunchOptions()
-                .setHeadless(config.browser().headless());
-            if (config.browser().executablePath() != null) {
-                launchOptions.setExecutablePath(
-                    java.nio.file.Paths.get(config.browser().executablePath())
-                );
-            }
-
-            browser = playwright.chromium().launch(launchOptions);
-
-            var contextOptions = new Browser.NewContextOptions();
-            String userAgent = configPort.getUserAgent();
-            if (userAgent != null && !userAgent.isBlank()) {
-                contextOptions.setUserAgent(userAgent);
-            }
-
-            proxyPort.getProxy().ifPresent(proxy ->
-                contextOptions.setProxy(proxy.toProxyUrl())
-            );
-
-            context = browser.newContext(contextOptions);
-            page = context.newPage();
-            page.addInitScript(STEALTH_SCRIPT);
-
             String url = config.baseUrl() + "/product/" + sku.value();
             Response response = page.navigate(url);
 
@@ -137,9 +142,32 @@ public class OzonPlaywrightAdapter implements ScraperPort {
             Money money = new Money(amount, "RUB");
             return new PricePoint(sku, money, Instant.now());
         } finally {
-            if (page != null) page.close();
-            if (context != null) context.close();
-            if (browser != null) browser.close();
+            page.close();
         }
+    }
+
+    private BrowserContext getOrCreateContext(int slot) {
+        return contextPool.computeIfAbsent(slot, k -> {
+            var contextOptions = new Browser.NewContextOptions();
+            String userAgent = configPort.getUserAgent();
+            if (userAgent != null && !userAgent.isBlank()) {
+                contextOptions.setUserAgent(userAgent);
+            }
+            ProxyPort.ProxyConfig proxy = proxyPort.nextProxy();
+            if (proxy != null) {
+                contextOptions.setProxy(proxy.toProxyUrl());
+            }
+            BrowserContext ctx = browser.newContext(contextOptions);
+            ctx.addInitScript(STEALTH_SCRIPT);
+            return ctx;
+        });
+    }
+
+    private String extractSellerId(Sku sku) {
+        String value = sku.value();
+        if (value.matches("\\d+") && value.length() > 4) {
+            return value.substring(0, 4);
+        }
+        return value;
     }
 }
